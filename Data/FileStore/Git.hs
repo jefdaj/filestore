@@ -1,3 +1,5 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 {- |
    Module      : Data.FileStore.Git
    Copyright   : Copyright (C) 2009 John MacFarlane
@@ -25,10 +27,11 @@ import Data.FileStore.Utils (withSanityCheck, hashsMatch, runShellCommand, escap
 import Data.ByteString.Lazy.UTF8 (toString)
 import qualified Data.ByteString.Lazy.Char8 as B
 import Control.Monad (when)
-import System.FilePath ((</>))
+import System.FilePath ((</>), splitFileName)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, executable, getPermissions, setPermissions)
 import Control.Exception (throwIO)
 import Paths_filestore
+import qualified Control.Exception as E
 
 -- | Return a filestore implemented using the git distributed revision control system
 -- (<http://git-scm.com/>).
@@ -101,6 +104,24 @@ gitSave repo name author logMsg contents = do
      then gitCommit repo [name] author logMsg
      else throwIO $ UnknownError $ "Could not git add '" ++ name ++ "'\n" ++ errAdd
 
+isSymlink :: FilePath -> FilePath -> Maybe RevisionId -> IO Bool
+isSymlink repo name revid = do
+  let objectName = case revid of
+                     Nothing  -> "HEAD:" ++ name
+                     Just rev -> rev ++ ":" ++ name
+  (_, _, out) <- runGitCommand repo "ls-tree" ["-t", objectName]
+  let mode = take 6 $ B.unpack out
+  return $ mode == "120000"
+
+targetContents :: Contents a => FilePath -> a -> IO (Maybe a)
+targetContents linkName linkContent = do
+  let (dirName, _) = splitFileName linkName
+      targetName   = dirName </> (B.unpack $ toByteString linkContent)
+  result <- E.try $ B.readFile targetName
+  case result of
+    Left (_ :: E.SomeException) -> return Nothing
+    Right contents -> return $ Just (fromByteString contents)
+
 -- | Retrieve contents from resource.
 gitRetrieve :: Contents a
             => FilePath
@@ -116,7 +137,15 @@ gitRetrieve repo name revid = do
   when (take 4 (toString output) /= "blob") $ throwIO NotFound
   (status', err', output') <- runGitCommand repo "cat-file" ["-p", objectName]
   if status' == ExitSuccess
-     then return $ fromByteString output'
+     then do
+       isLink <- isSymlink repo name revid
+       if isLink
+        then do
+          contents <- targetContents name output'
+          case contents of
+            Nothing  -> return $ fromByteString output'
+            Just txt -> return $ fromByteString txt
+        else return $ fromByteString output'
      else throwIO $ UnknownError $ "Error in git cat-file:\n" ++ err'
 
 -- | Delete a resource from the repository.
