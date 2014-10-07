@@ -19,7 +19,7 @@ module Data.FileStore.Git
            )
 where
 import Data.FileStore.Types
-import Data.Maybe (mapMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.List.Split (endByOneOf)
 import System.Exit
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
@@ -106,17 +106,14 @@ gitSave repo name author logMsg contents = do
 
 isSymlink :: FilePath -> FilePath -> Maybe RevisionId -> IO Bool
 isSymlink repo name revid = do
-  let objectName = case revid of
-                     Nothing  -> "HEAD:" ++ name
-                     Just rev -> rev ++ ":" ++ name
-  (_, _, out) <- runGitCommand repo "ls-tree" ["-t", objectName]
-  let mode = take 6 $ B.unpack out
-  return $ mode == "120000"
+  (_, _, out) <- runGitCommand repo "ls-tree" [fromMaybe "HEAD" revid, name]
+  -- see http://stackoverflow.com/questions/737673
+  return $ (take 6 $ B.unpack out) == "120000"
 
-targetContents :: Contents a => FilePath -> a -> IO (Maybe a)
-targetContents linkName linkContent = do
+targetContents :: Contents a => FilePath -> FilePath -> a -> IO (Maybe a)
+targetContents repo linkName linkContent = do
   let (dirName, _) = splitFileName linkName
-      targetName   = dirName </> (B.unpack $ toByteString linkContent)
+      targetName   = repo </> dirName </> (B.unpack $ toByteString linkContent)
   result <- E.try $ B.readFile targetName
   case result of
     Left (_ :: E.SomeException) -> return Nothing
@@ -141,10 +138,13 @@ gitRetrieve repo name revid = do
        isLink <- isSymlink repo name revid
        if isLink
         then do
-          contents <- targetContents name output'
+          contents <- targetContents repo name output'
           case contents of
-            Nothing  -> return $ fromByteString output'
-            Just txt -> return $ fromByteString txt
+            -- ideal output on Nothing would be something like
+            -- "broken symlink: <output'>", but I couldn't figure
+            -- out the bytestring types to do that
+            Nothing -> return $ fromByteString output'
+            Just bs -> return $ fromByteString bs
         else return $ fromByteString output'
      else throwIO $ UnknownError $ "Error in git cat-file:\n" ++ err'
 
