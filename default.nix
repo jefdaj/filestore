@@ -16,17 +16,17 @@ let
     ]
     else [];
 
-in haskellPackages.cabal.mkDerivation (self: {
-  pname = "filestore";
-  version = "0.6.0.3";
-  src = ./.;
-  buildDepends = with haskellPackages; devDepends ++
-    [ Diff filepath parsec split time utf8String xml ];
-  testDepends = with haskellPackages;
-    [ Diff filepath HUnit mtl time ];
-  meta = {
-    description = "Interface for versioning file stores";
-    license = self.stdenv.lib.licenses.bsd3;
-    platforms = self.ghc.meta.platforms;
-  };
-})
+in with haskellPackages;
+  cabal.mkDerivation (self: {
+    pname = "filestore";
+    version = "0.6.0.3";
+    src = ./.;
+    buildDepends = devDepends ++
+      [ Diff filepath parsec split time utf8String xml ];
+    testDepends = [ Diff filepath HUnit mtl time ];
+    meta = {
+      description = "Interface for versioning file stores";
+      license = self.stdenv.lib.licenses.bsd3;
+      platforms = self.ghc.meta.platforms;
+    };
+  })
